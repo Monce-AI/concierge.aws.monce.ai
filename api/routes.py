@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from . import memory
 from .sonnet import chat
 from .ingest import ingest_extractions, ingest_stats
+from . import snake
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,22 @@ class IngestRequest(BaseModel):
     days: int = 14
     factory: Optional[str] = None
     status: Optional[str] = None
+
+class ArticleSynonymRequest(BaseModel):
+    text: str
+    num_article: str
+    factory_id: str
+    trigger_rebuild: bool = False
+
+class ClientSynonymRequest(BaseModel):
+    text: str
+    numero_client: str
+    factory_id: str
+    trigger_rebuild: bool = False
+
+class BatchSynonymRequest(BaseModel):
+    synonyms: list
+    synonym_type: str = "article"
 
 
 # --- Endpoints ---
@@ -177,3 +194,75 @@ async def search_endpoint(q: str, limit: int = 30):
     """Search memories by keyword."""
     results = memory.search_memories(q, limit=limit)
     return {"query": q, "results": len(results), "memories": results}
+
+
+# --- Snake synonym endpoints ---
+
+@router.post("/snake/synonym")
+async def add_article_synonym(req: ArticleSynonymRequest):
+    """Push an article synonym to snake.aws.monce.ai."""
+    try:
+        result = snake.add_article_synonym(
+            text=req.text,
+            num_article=req.num_article,
+            factory_id=req.factory_id,
+            trigger_rebuild=req.trigger_rebuild,
+        )
+        memory.add_memory(
+            f"Added article synonym: '{req.text}' → article {req.num_article} [{req.factory_id}]",
+            source="snake",
+            tags=["synonym", "article", req.factory_id],
+        )
+        return {"status": "ok", "result": result}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/snake/synonym_client")
+async def add_client_synonym(req: ClientSynonymRequest):
+    """Push a client synonym to snake.aws.monce.ai."""
+    try:
+        result = snake.add_client_synonym(
+            text=req.text,
+            numero_client=req.numero_client,
+            factory_id=req.factory_id,
+            trigger_rebuild=req.trigger_rebuild,
+        )
+        memory.add_memory(
+            f"Added client synonym: '{req.text}' → client {req.numero_client} [{req.factory_id}]",
+            source="snake",
+            tags=["synonym", "client", req.factory_id],
+        )
+        return {"status": "ok", "result": result}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/snake/synonyms_batch")
+async def add_synonyms_batch(req: BatchSynonymRequest):
+    """Push multiple synonyms to snake.aws.monce.ai in batch, then rebuild."""
+    try:
+        result = snake.add_synonyms_batch(
+            synonyms=req.synonyms,
+            synonym_type=req.synonym_type,
+        )
+        if result["added"] > 0:
+            memory.add_memory(
+                f"Batch added {result['added']} {req.synonym_type} synonyms "
+                f"to factories: {', '.join(result['factories_affected'])}",
+                source="snake",
+                tags=["synonym", "batch", req.synonym_type],
+            )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/snake/rebuild")
+async def rebuild_snake():
+    """Trigger a full rebuild of all Snake factory tenants."""
+    try:
+        result = snake.rebuild_all()
+        return {"status": "ok", "result": result}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
