@@ -66,7 +66,7 @@ User=ubuntu
 WorkingDirectory=/opt/concierge/app
 EnvironmentFile=/opt/concierge/.env
 Environment="PATH=/opt/concierge/venv/bin"
-ExecStart=/opt/concierge/venv/bin/gunicorn -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --workers 2 --timeout 60 api.main:app
+ExecStart=/opt/concierge/venv/bin/gunicorn -k uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --workers 2 --timeout 300 api.main:app
 Restart=always
 
 [Install]

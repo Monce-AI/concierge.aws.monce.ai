@@ -129,14 +129,14 @@ def ingest_extractions(
     existing = memory.load_memories()
     existing_ids = set()
     for m in existing:
-        # Extract ID from memory text if tagged
         if m.get("tags") and "extraction" in m.get("tags", []):
             text = m.get("text", "")
             if "ext_id=" in text:
                 eid = text.split("ext_id=")[1].split(" ")[0].split("|")[0].strip()
                 existing_ids.add(eid)
 
-    ingested = 0
+    # Batch build new memories (avoid O(n^2) JSON I/O)
+    new_entries = []
     skipped = 0
 
     for ext in data:
@@ -153,9 +153,19 @@ def ingest_extractions(
         if factory_name:
             tags.append(factory_name)
 
-        memory.add_memory(text, source="monce_db", tags=tags)
-        ingested += 1
+        new_entries.append({
+            "text": text,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "monce_db",
+            "tags": tags,
+        })
 
+    # Single write
+    if new_entries:
+        existing.extend(new_entries)
+        memory.save_memories(existing)
+
+    ingested = len(new_entries)
     logger.info(f"Ingested {ingested} extractions, skipped {skipped} duplicates")
 
     return {
