@@ -45,7 +45,14 @@ $SSH_CMD 'cd /opt/concierge && \
     ([ -d venv ] || python3 -m venv venv) && \
     source venv/bin/activate && \
     pip install --upgrade pip -q && \
-    pip install fastapi uvicorn pydantic requests gunicorn -q'
+    pip install fastapi uvicorn pydantic requests gunicorn boto3 -q'
+
+# Install monce_db if available on server
+echo "-> Installing monce_db..."
+$SSH_CMD 'cd /opt/concierge && source venv/bin/activate && \
+    if [ -d /opt/concierge/app/lib/monce_db ]; then \
+        pip install -e /opt/concierge/app/lib/monce_db -q 2>/dev/null || true; \
+    fi'
 
 # Create systemd service
 echo "-> Configuring systemd..."
@@ -115,4 +122,8 @@ echo "  Chat:  https://concierge.aws.monce.ai/ui"
 echo ""
 echo "  Add tokens to /opt/concierge/.env:"
 echo "  AWS_BEARER_TOKEN_BEDROCK=..."
+echo ""
+echo "  For monce_db ingestion, also add:"
+echo "  MONCE_S3_ACCESS_KEY=..."
+echo "  MONCE_S3_SECRET_KEY=..."
 echo "========================================"

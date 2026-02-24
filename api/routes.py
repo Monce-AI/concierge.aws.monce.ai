@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from . import memory
 from .sonnet import chat
+from .ingest import ingest_extractions, ingest_stats
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class RememberResponse(BaseModel):
 class ForgetResponse(BaseModel):
     forgotten: int
     query: str
+
+class IngestRequest(BaseModel):
+    days: int = 14
+    factory: Optional[str] = None
+    status: Optional[str] = None
 
 
 # --- Endpoints ---
@@ -103,9 +109,11 @@ async def forget_memories(req: ForgetRequest):
 
 
 @router.get("/memories")
-async def get_memories(limit: int = 50, offset: int = 0):
-    """Return memories, most recent first."""
+async def get_memories(limit: int = 50, offset: int = 0, tag: Optional[str] = None):
+    """Return memories, most recent first. Optionally filter by tag."""
     all_memories = memory.load_memories()
+    if tag:
+        all_memories = [m for m in all_memories if tag in m.get("tags", [])]
     total = len(all_memories)
     reversed_memories = list(reversed(all_memories))
     page = reversed_memories[offset:offset + limit]
@@ -113,5 +121,34 @@ async def get_memories(limit: int = 50, offset: int = 0):
         "total": total,
         "offset": offset,
         "limit": limit,
+        "tag": tag,
         "memories": page,
     }
+
+
+@router.post("/ingest")
+async def ingest_endpoint(req: IngestRequest):
+    """Ingest extraction data from monce_db into Concierge memory.
+
+    Pulls extractions from the last N days and stores them as tagged memories.
+    Deduplicates by extraction ID — safe to call repeatedly.
+    """
+    try:
+        result = ingest_extractions(
+            days=req.days,
+            factory=req.factory,
+            status=req.status,
+        )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ingest/stats")
+async def ingest_stats_endpoint(factory: Optional[str] = None):
+    """Pull aggregate stats from monce_db and store as memory."""
+    try:
+        stats = ingest_stats(factory=factory)
+        return stats
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))

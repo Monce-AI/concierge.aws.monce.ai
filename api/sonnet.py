@@ -90,7 +90,6 @@ def chat(message: str) -> dict:
     if recent_convos:
         convo_text = "## Recent conversations\n"
         for c in recent_convos:
-            convo_text.append  # Skip if empty
             convo_text += f"- User: {c['user'][:100]}\n  Concierge: {c['assistant'][:100]}\n"
         context_parts.append(convo_text)
 
