@@ -7,7 +7,10 @@ import time
 import requests
 
 from .config import config
-from .memory import get_recent_memories, get_recent_conversations, load_manifest
+from .memory import (
+    get_recent_memories, get_recent_conversations, load_manifest,
+    load_digests, search_memories,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +28,19 @@ Your role:
 - You report on extraction data: what's being processed, what's succeeding, what's failing, what patterns emerge.
 - You know the Monce AI stack: Claude multistage extraction, Snake SAT matching, fuzzy article matching, customer prompt profiles.
 
-Personality:
-- Sharp, concise, data-driven.
-- You speak like an experienced ops analyst who's seen every order come through.
-- When asked about patterns, you synthesize from your memories — don't just list, interpret.
-- French context welcome (Monce is a French glass industry company), but default to English unless spoken to in French.
+Context structure:
+- [DIGEST] entries are pre-computed aggregates from ALL extraction data — use these for volume, ranking, and trend questions.
+- [SEARCH] entries are memories matched to the user's query by keyword — use these for specific lookups.
+- Recent memories are the latest raw ingestions — use these for "what just happened" questions.
 
-When you have memories/context, use them to give informed answers. When you don't have enough data, say so clearly."""
+Personality:
+- Sharp, concise, data-driven. Use numbers.
+- You speak like an experienced ops analyst who's seen every order come through.
+- When asked about patterns, synthesize from digests first, then raw memories.
+- French context welcome (Monce is a French glass industry company), but default to English unless spoken to in French.
+- When you cite data, be specific: give counts, percentages, client names, dates.
+
+When you have memories/context, use them to give informed answers. When you don't have enough data, say so clearly and suggest running /ingest."""
 
 
 def _call_sonnet(messages: list, system: str = None, max_tokens: int = 2048) -> str:
@@ -65,28 +74,46 @@ def _call_sonnet(messages: list, system: str = None, max_tokens: int = 2048) -> 
 
 
 def chat(message: str) -> dict:
-    """Chat with Concierge using full memory context.
+    """Chat with Concierge using digests + smart search + recent context.
 
     Returns: {"reply": str, "latency_ms": int}
     """
     manifest = load_manifest()
-    recent_memories = get_recent_memories(30)
+    digests = load_digests()
+    search_results = search_memories(message, limit=20)
+    recent_memories = get_recent_memories(10)
     recent_convos = get_recent_conversations(10)
 
-    # Build context
+    # Build context — prioritize digests, then search, then recent
     context_parts = []
 
     if manifest and manifest != "No manifest defined yet.":
         context_parts.append(f"## Manifest\n{manifest}")
 
+    # Digests — pre-computed aggregates (always include, they're compact)
+    if digests:
+        digest_text = "## Digests (pre-computed from ALL extraction data)\n"
+        for d in digests:
+            digest_text += f"- {d['text']}\n"
+        context_parts.append(digest_text)
+
+    # Search results — memories relevant to this query
+    if search_results:
+        search_text = "## Search results (memories matching your query)\n"
+        for m in search_results:
+            tags = f" [{', '.join(m['tags'])}]" if m.get("tags") else ""
+            search_text += f"- {m['text']}{tags}\n"
+        context_parts.append(search_text)
+
+    # Recent raw memories
     if recent_memories:
-        mem_text = "## Recent memories\n"
+        mem_text = "## Recent memories (latest 10)\n"
         for m in recent_memories:
             tags = f" [{', '.join(m['tags'])}]" if m.get("tags") else ""
-            source = f" (from {m['source']})" if m.get("source") else ""
-            mem_text += f"- {m['text']}{tags}{source} — {m['timestamp']}\n"
+            mem_text += f"- {m['text']}{tags} — {m['timestamp']}\n"
         context_parts.append(mem_text)
 
+    # Recent conversations
     if recent_convos:
         convo_text = "## Recent conversations\n"
         for c in recent_convos:

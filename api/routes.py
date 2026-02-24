@@ -132,6 +132,7 @@ async def ingest_endpoint(req: IngestRequest):
 
     Pulls extractions from the last N days and stores them as tagged memories.
     Deduplicates by extraction ID — safe to call repeatedly.
+    Auto-computes digests after ingestion.
     """
     try:
         result = ingest_extractions(
@@ -139,6 +140,9 @@ async def ingest_endpoint(req: IngestRequest):
             factory=req.factory,
             status=req.status,
         )
+        # Auto-compute digests after ingestion
+        digests = memory.compute_digests()
+        result["digests_computed"] = len(digests)
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -152,3 +156,24 @@ async def ingest_stats_endpoint(factory: Optional[str] = None):
         return stats
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/digest")
+async def compute_digest():
+    """Recompute aggregate digests from all extraction memories."""
+    digests = memory.compute_digests()
+    return {"digests": len(digests), "entries": digests}
+
+
+@router.get("/digest")
+async def get_digests():
+    """Return current digests."""
+    digests = memory.load_digests()
+    return {"digests": len(digests), "entries": digests}
+
+
+@router.get("/search")
+async def search_endpoint(q: str, limit: int = 30):
+    """Search memories by keyword."""
+    results = memory.search_memories(q, limit=limit)
+    return {"query": q, "results": len(results), "memories": results}
