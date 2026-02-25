@@ -343,6 +343,190 @@ def compute_digests() -> list:
             "timestamp": now.isoformat(),
         })
 
+    # --- 7. New/emerging clients (first seen in last 7 days) ---
+    week_ago_str = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    two_weeks_ago_str = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+
+    old_clients = set()
+    new_clients_this_week = Counter()
+    for r in records:
+        date = r.get("created_date", "")[:10]
+        client = r.get("client")
+        if not client:
+            continue
+        if date < week_ago_str:
+            old_clients.add(client)
+        elif date >= week_ago_str:
+            new_clients_this_week[client] += 1
+
+    emerging = {c: n for c, n in new_clients_this_week.items() if c not in old_clients}
+    if emerging:
+        sorted_emerging = sorted(emerging.items(), key=lambda x: x[1], reverse=True)[:15]
+        emerging_lines = ", ".join(f"{name} ({count} orders)" for name, count in sorted_emerging)
+        digests.append({
+            "text": (
+                f"[INTELLIGENCE] New clients this week (not seen before {week_ago_str}): "
+                f"{emerging_lines} | {len(emerging)} new clients total"
+            ),
+            "type": "new_clients",
+            "timestamp": now.isoformat(),
+        })
+
+    # --- 8. Client volume anomalies (week-over-week spikes/drops) ---
+    prev_week_clients = Counter()
+    curr_week_clients = Counter()
+    for r in records:
+        date = r.get("created_date", "")[:10]
+        client = r.get("client")
+        if not client or not date:
+            continue
+        if two_weeks_ago_str <= date < week_ago_str:
+            prev_week_clients[client] += 1
+        elif date >= week_ago_str:
+            curr_week_clients[client] += 1
+
+    spikes = []
+    drops = []
+    all_clients_both_weeks = set(prev_week_clients) | set(curr_week_clients)
+    for client in all_clients_both_weeks:
+        prev = prev_week_clients.get(client, 0)
+        curr = curr_week_clients.get(client, 0)
+        if prev >= 3 and curr >= prev * 2:
+            spikes.append((client, prev, curr))
+        elif prev >= 3 and curr <= prev * 0.3:
+            drops.append((client, prev, curr))
+
+    if spikes:
+        spikes.sort(key=lambda x: x[2], reverse=True)
+        spike_lines = ", ".join(f"{c} ({p}→{cu}, +{(cu/p-1)*100:.0f}%)" for c, p, cu in spikes[:10])
+        digests.append({
+            "text": f"[INTELLIGENCE] Volume spikes (2x+ week-over-week): {spike_lines}",
+            "type": "volume_spikes",
+            "timestamp": now.isoformat(),
+        })
+
+    if drops:
+        drops.sort(key=lambda x: x[1], reverse=True)
+        drop_lines = ", ".join(f"{c} ({p}→{cu}, -{(1-cu/p)*100:.0f}%)" for c, p, cu in drops[:10])
+        digests.append({
+            "text": f"[INTELLIGENCE] Volume drops (70%+ decline week-over-week): {drop_lines}",
+            "type": "volume_drops",
+            "timestamp": now.isoformat(),
+        })
+
+    # --- 9. Glass type shifts (new types appearing this week) ---
+    old_glasses = set()
+    new_glasses_this_week = Counter()
+    for r in records:
+        date = r.get("created_date", "")[:10]
+        for g in r.get("glasses", []):
+            if date < week_ago_str:
+                old_glasses.add(g)
+            elif date >= week_ago_str:
+                new_glasses_this_week[g] += 1
+
+    emerging_glass = {g: n for g, n in new_glasses_this_week.items() if g not in old_glasses}
+    if emerging_glass:
+        sorted_eg = sorted(emerging_glass.items(), key=lambda x: x[1], reverse=True)[:10]
+        eg_lines = ", ".join(f"{g} ({n}x)" for g, n in sorted_eg)
+        digests.append({
+            "text": f"[INTELLIGENCE] New glass types this week (not seen before): {eg_lines}",
+            "type": "new_glass_types",
+            "timestamp": now.isoformat(),
+        })
+
+    # --- 10. Client product diversification (clients ordering new glass types) ---
+    client_glasses_old = {}
+    client_glasses_new = {}
+    for r in records:
+        date = r.get("created_date", "")[:10]
+        client = r.get("client")
+        if not client:
+            continue
+        glasses = set(r.get("glasses", []))
+        if date < week_ago_str:
+            client_glasses_old.setdefault(client, set()).update(glasses)
+        elif date >= week_ago_str:
+            client_glasses_new.setdefault(client, set()).update(glasses)
+
+    diversifying = []
+    for client in client_glasses_new:
+        if client in client_glasses_old:
+            new_types = client_glasses_new[client] - client_glasses_old[client]
+            if new_types:
+                diversifying.append((client, new_types))
+
+    if diversifying:
+        diversifying.sort(key=lambda x: len(x[1]), reverse=True)
+        div_lines = ", ".join(
+            f"{c} (+{', '.join(list(g)[:3])})"
+            for c, g in diversifying[:10]
+        )
+        digests.append({
+            "text": (
+                f"[INTELLIGENCE] Clients ordering new product types this week: {div_lines} | "
+                f"{len(diversifying)} clients diversifying"
+            ),
+            "type": "product_diversification",
+            "timestamp": now.isoformat(),
+        })
+
+    # --- 11. Low-confidence hotspots (clients/factories needing synonym work) ---
+    low_conf_clients = Counter()
+    low_conf_factories = Counter()
+    for r in records:
+        conf = r.get("confidence")
+        if conf is not None and conf < 0.7:
+            client = r.get("client")
+            factory = r.get("factory")
+            if client:
+                low_conf_clients[client] += 1
+            if factory:
+                low_conf_factories[factory] += 1
+
+    if low_conf_clients:
+        top_low = low_conf_clients.most_common(10)
+        low_lines = ", ".join(f"{c} ({n} low-conf)" for c, n in top_low)
+        digests.append({
+            "text": (
+                f"[INTELLIGENCE] Clients with most low-confidence matches (<70%): {low_lines} | "
+                f"These may need synonym additions on Snake"
+            ),
+            "type": "low_confidence_hotspots",
+            "timestamp": now.isoformat(),
+        })
+
+    # --- 12. Factory activity distribution shift ---
+    prev_factory = Counter()
+    curr_factory = Counter()
+    for r in records:
+        date = r.get("created_date", "")[:10]
+        factory = r.get("factory", "unknown")
+        if two_weeks_ago_str <= date < week_ago_str:
+            prev_factory[factory] += 1
+        elif date >= week_ago_str:
+            curr_factory[factory] += 1
+
+    prev_total = sum(prev_factory.values()) or 1
+    curr_total = sum(curr_factory.values()) or 1
+    all_factories = set(prev_factory) | set(curr_factory)
+    shifts = []
+    for f in all_factories:
+        prev_pct = prev_factory.get(f, 0) / prev_total * 100
+        curr_pct = curr_factory.get(f, 0) / curr_total * 100
+        if abs(curr_pct - prev_pct) > 5:
+            shifts.append((f, prev_pct, curr_pct))
+
+    if shifts:
+        shift_lines = ", ".join(
+            f"{f} ({p:.0f}%→{c:.0f}%)" for f, p, c in sorted(shifts, key=lambda x: abs(x[2]-x[1]), reverse=True)
+        )
+        digests.append({
+            "text": f"[INTELLIGENCE] Factory volume share shifts (>5pt change): {shift_lines}",
+            "type": "factory_shifts",
+            "timestamp": now.isoformat(),
+        })
+
     # Save digests
     save_digests(digests)
     return digests

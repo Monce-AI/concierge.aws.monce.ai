@@ -266,3 +266,54 @@ async def rebuild_snake():
         return {"status": "ok", "result": result}
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- Intelligence endpoints ---
+
+@router.get("/intelligence")
+async def intelligence():
+    """Return business intelligence signals from current digests.
+
+    Filters digests to only [INTELLIGENCE] entries — the actionable signals:
+    new clients, volume anomalies, product shifts, low-confidence hotspots.
+    """
+    digests = memory.load_digests()
+    signals = [d for d in digests if d.get("type", "").startswith(("new_", "volume_", "product_", "low_", "factory_"))]
+    return {
+        "signals": len(signals),
+        "entries": signals,
+        "tip": "Run POST /ingest then POST /digest to refresh intelligence from latest data",
+    }
+
+
+@router.get("/intelligence/clients")
+async def intelligence_clients():
+    """Client-focused intelligence: new clients, volume anomalies, diversification."""
+    digests = memory.load_digests()
+    client_signals = [
+        d for d in digests
+        if d.get("type") in ("new_clients", "volume_spikes", "volume_drops", "product_diversification")
+    ]
+    return {"signals": len(client_signals), "entries": client_signals}
+
+
+@router.get("/intelligence/quality")
+async def intelligence_quality():
+    """Matching quality intelligence: low-confidence hotspots needing synonym work."""
+    digests = memory.load_digests()
+    quality_signals = [
+        d for d in digests
+        if d.get("type") in ("low_confidence_hotspots", "matching_quality")
+    ]
+    return {"signals": len(quality_signals), "entries": quality_signals}
+
+
+@router.get("/intelligence/market")
+async def intelligence_market():
+    """Market intelligence: new glass types, factory shifts, product trends."""
+    digests = memory.load_digests()
+    market_signals = [
+        d for d in digests
+        if d.get("type") in ("new_glass_types", "factory_shifts", "glass_types")
+    ]
+    return {"signals": len(market_signals), "entries": market_signals}
