@@ -1,5 +1,6 @@
 """API routes for Concierge."""
 
+import json
 import logging
 from typing import Optional
 
@@ -13,6 +14,7 @@ from .sonnet import chat
 from .ingest import ingest_extractions, ingest_stats
 from . import snake
 from . import data_kpi
+from . import email as email_handler
 
 logger = logging.getLogger(__name__)
 
@@ -383,5 +385,47 @@ async def kpi_standup(hours: int = 24):
     """Daily standup report from data.aws.monce.ai."""
     try:
         return data_kpi.fetch_standup(hours=hours)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- Email endpoints ---
+
+class SendEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+@router.post("/email/incoming")
+async def email_incoming(request: Request):
+    """Receive incoming emails via SNS notification from SES.
+
+    Handles SNS subscription confirmation and email notifications.
+    Concierge processes the email, generates a reply via Sonnet,
+    and sends it back via SES.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raw = await request.body()
+        body = json.loads(raw)
+
+    result = email_handler.process_sns_notification(body)
+    if result:
+        return result
+    return {"status": "ignored"}
+
+
+@router.post("/email/send")
+async def email_send(req: SendEmailRequest):
+    """Send an email from concierge@aws.monce.ai."""
+    try:
+        email_handler.send_email(to=req.to, subject=req.subject, body=req.body)
+        memory.add_memory(
+            f"Email sent to {req.to} — Subject: {req.subject}",
+            source="email",
+            tags=["email", "outgoing"],
+        )
+        return {"status": "sent", "to": req.to, "subject": req.subject}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
