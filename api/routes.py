@@ -12,6 +12,7 @@ from . import memory
 from .sonnet import chat
 from .ingest import ingest_extractions, ingest_stats
 from . import snake
+from . import data_kpi
 
 logger = logging.getLogger(__name__)
 
@@ -317,3 +318,70 @@ async def intelligence_market():
         if d.get("type") in ("new_glass_types", "factory_shifts", "glass_types")
     ]
     return {"signals": len(market_signals), "entries": market_signals}
+
+
+# --- Data KPI endpoints (data.aws.monce.ai) ---
+
+@router.get("/kpi")
+async def kpi_all(days: int = 1, factory_id: Optional[int] = None):
+    """Pull all KPIs from data.aws.monce.ai and store as memory.
+
+    Returns accuracy, volume, synonym suggestions, and pending reviews.
+    Default 1 day to keep queries fast. Use days=7 for weekly view.
+    """
+    try:
+        kpis = data_kpi.fetch_all_kpis(days=days, factory_id=factory_id)
+        summary = data_kpi.summarize_kpis_for_memory(kpis)
+        memory.add_memory(
+            f"[KPI snapshot {days}d] {summary}",
+            source="data.aws.monce.ai",
+            tags=["kpi", "snapshot"],
+        )
+        return kpis
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/kpi/accuracy")
+async def kpi_accuracy(days: int = 1, factory_id: Optional[int] = None):
+    """Extraction accuracy KPI from data.aws.monce.ai."""
+    try:
+        return data_kpi.fetch_accuracy(days=days, factory_id=factory_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/kpi/volume")
+async def kpi_volume(days: int = 1, factory_id: Optional[int] = None):
+    """Extraction volume KPI from data.aws.monce.ai."""
+    try:
+        return data_kpi.fetch_volume(days=days, factory_id=factory_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/kpi/suggestions")
+async def kpi_suggestions(days: int = 1, factory_id: Optional[int] = None, min_confidence: float = 0.5):
+    """Synonym suggestions — Snake SAT matches that need synonym entries."""
+    try:
+        return data_kpi.fetch_suggestions(days=days, factory_id=factory_id, min_confidence=min_confidence)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/kpi/comments")
+async def kpi_comments(days: int = 1):
+    """User feedback/comment statistics from data.aws.monce.ai."""
+    try:
+        return data_kpi.fetch_comments_stats(days=days)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/kpi/standup")
+async def kpi_standup(hours: int = 24):
+    """Daily standup report from data.aws.monce.ai."""
+    try:
+        return data_kpi.fetch_standup(hours=hours)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
